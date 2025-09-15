@@ -32,7 +32,10 @@ jobs:
       - name: Validate go.mod
         run: |
           go mod tidy
-          git diff --exit-code go.mod go.sum || (echo "go.mod/go.sum need updating" && exit 1)
+          git diff --exit-code go.mod || (echo "go.mod needs updating" && exit 1)
+          if [ -f go.sum ]; then
+            git diff --exit-code go.sum || (echo "go.sum needs updating" && exit 1)
+          fi
       
       - name: Run tests
         run: |
