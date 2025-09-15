@@ -13,9 +13,360 @@ Type-safe clock abstractions for Go with zero dependencies.
 
 Build reliable applications with deterministic time handling that are easy to test and reason about.
 
-## The Power of Abstractions
+## Quick Start
 
-At its core, clockz is built on a simple, clean interface:
+```go
+import "github.com/zoobzio/clockz"
+
+// Production: use real time
+service := &Service{clock: clockz.RealClock}
+
+// Testing: control time precisely
+clock := clockz.NewFakeClockAt(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
+clock.Advance(5 * time.Minute) // Jump forward in time
+```
+
+## Why clockz?
+
+- **Deterministic Testing**: Eliminate time-based test flakiness
+- **Zero Dependencies**: Just the standard library
+- **Thread-Safe**: All operations safe for concurrent use
+- **Context Integration**: Built-in timeout and deadline support
+- **Simple API**: Familiar interface matching `time` package
+
+## Installation
+
+```bash
+go get github.com/zoobzio/clockz
+```
+
+Requirements: Go 1.21+
+
+## Core Concepts
+
+### Clock Selection Guide
+
+**Use RealClock when:**
+- Running in production
+- Integrating with external systems
+- Measuring actual performance
+
+**Use FakeClock when:**
+- Writing unit tests
+- Testing timeout behavior
+- Simulating time-dependent scenarios
+- Eliminating test flakiness
+
+### Dependency Injection Pattern
+
+```go
+type Service struct {
+    clock clockz.Clock // Inject clock dependency
+}
+
+func NewService(clock clockz.Clock) *Service {
+    return &Service{clock: clock}
+}
+
+func (s *Service) ProcessWithRetry() error {
+    for attempt := 0; attempt < 3; attempt++ {
+        if err := s.process(); err == nil {
+            return nil
+        }
+        
+        // Use injected clock for delays
+        s.clock.Sleep(time.Second * time.Duration(1<<attempt))
+    }
+    return errors.New("max retries exceeded")
+}
+
+// Production
+service := NewService(clockz.RealClock)
+
+// Testing - runs instantly
+func TestProcessWithRetry(t *testing.T) {
+    clock := clockz.NewFakeClockAt(time.Now())
+    service := NewService(clock)
+    
+    go service.ProcessWithRetry()
+    
+    // Control time advancement
+    clock.Advance(1 * time.Second)  // First retry
+    clock.Advance(2 * time.Second)  // Second retry
+}
+```
+
+## Basic Usage Examples
+
+### Timer Management
+
+```go
+// Create and use timers
+timer := clock.NewTimer(5 * time.Second)
+defer timer.Stop()
+
+select {
+case <-timer.C():
+    fmt.Println("Timer expired")
+case <-ctx.Done():
+    fmt.Println("Context cancelled")
+}
+
+// Reset timer for reuse
+if timer.Reset(10 * time.Second) {
+    fmt.Println("Timer was active")
+}
+```
+
+### Ticker Operations
+
+```go
+// Create ticker for periodic events
+ticker := clock.NewTicker(time.Second)
+defer ticker.Stop()
+
+for i := 0; i < 5; i++ {
+    <-ticker.C()
+    fmt.Printf("Tick %d at %v\n", i+1, clock.Now())
+}
+```
+
+### Context with Timeouts
+
+```go
+// Create timeout context
+ctx, cancel := clock.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+
+// Create deadline context
+deadline := clock.Now().Add(1 * time.Hour)
+ctx, cancel = clock.WithDeadline(context.Background(), deadline)
+defer cancel()
+
+// Use in operations
+select {
+case result := <-doWork():
+    return result, nil
+case <-ctx.Done():
+    return nil, ctx.Err()
+}
+```
+
+### Time Measurements
+
+```go
+// Measure elapsed time
+start := clock.Now()
+processData()
+elapsed := clock.Since(start)
+fmt.Printf("Processing took %v\n", elapsed)
+
+// Sleep for duration
+clock.Sleep(100 * time.Millisecond)
+
+// Wait with channel
+select {
+case <-clock.After(5 * time.Second):
+    fmt.Println("Timeout reached")
+case result := <-operation():
+    fmt.Printf("Got result: %v\n", result)
+}
+```
+
+## Testing Patterns
+
+### Basic Time Control
+
+```go
+func TestTimeoutBehavior(t *testing.T) {
+    clock := clockz.NewFakeClockAt(time.Now())
+    
+    done := make(chan bool)
+    go func() {
+        <-clock.After(5 * time.Minute)
+        done <- true
+    }()
+    
+    // Verify nothing happens before timeout
+    clock.Advance(4 * time.Minute)
+    select {
+    case <-done:
+        t.Fatal("Should not timeout yet")
+    default:
+        // Expected
+    }
+    
+    // Trigger timeout
+    clock.Advance(1 * time.Minute)
+    select {
+    case <-done:
+        // Success
+    case <-time.After(100 * time.Millisecond):
+        t.Fatal("Should have timed out")
+    }
+}
+```
+
+### Testing Concurrent Operations
+
+```go
+func TestConcurrentTimers(t *testing.T) {
+    clock := clockz.NewFakeClockAt(time.Now())
+    results := make(chan int, 3)
+    
+    // Start multiple timers
+    go func() {
+        <-clock.After(1 * time.Second)
+        results <- 1
+    }()
+    
+    go func() {
+        <-clock.After(2 * time.Second)
+        results <- 2
+    }()
+    
+    go func() {
+        <-clock.After(3 * time.Second)
+        results <- 3
+    }()
+    
+    // Advance time and verify order
+    clock.Advance(2 * time.Second)
+    
+    if val := <-results; val != 1 {
+        t.Errorf("Expected 1, got %d", val)
+    }
+    if val := <-results; val != 2 {
+        t.Errorf("Expected 2, got %d", val)
+    }
+    
+    clock.Advance(1 * time.Second)
+    if val := <-results; val != 3 {
+        t.Errorf("Expected 3, got %d", val)
+    }
+}
+```
+
+### Context Timeout Testing
+
+```go
+func TestContextDeadline(t *testing.T) {
+    clock := clockz.NewFakeClockAt(time.Now())
+    
+    ctx, cancel := clock.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    
+    done := make(chan error)
+    go func() {
+        <-ctx.Done()
+        done <- ctx.Err()
+    }()
+    
+    // Advance to trigger timeout
+    clock.Advance(5 * time.Second)
+    
+    err := <-done
+    if err != context.DeadlineExceeded {
+        t.Errorf("Expected DeadlineExceeded, got %v", err)
+    }
+}
+```
+
+## Advanced Patterns
+
+### Retry with Exponential Backoff
+
+```go
+func RetryWithBackoff(clock clockz.Clock, operation func() error) error {
+    backoff := 100 * time.Millisecond
+    maxBackoff := 30 * time.Second
+    
+    for attempt := 0; attempt < 5; attempt++ {
+        if err := operation(); err == nil {
+            return nil
+        }
+        
+        if attempt < 4 { // Don't sleep after last attempt
+            clock.Sleep(backoff)
+            backoff *= 2
+            if backoff > maxBackoff {
+                backoff = maxBackoff
+            }
+        }
+    }
+    
+    return errors.New("operation failed after 5 attempts")
+}
+```
+
+### Rate Limiting
+
+```go
+type RateLimiter struct {
+    clock    clockz.Clock
+    ticker   clockz.Ticker
+    tokens   chan struct{}
+}
+
+func NewRateLimiter(clock clockz.Clock, rps int) *RateLimiter {
+    rl := &RateLimiter{
+        clock:  clock,
+        ticker: clock.NewTicker(time.Second / time.Duration(rps)),
+        tokens: make(chan struct{}, rps),
+    }
+    
+    // Fill initial tokens
+    for i := 0; i < rps; i++ {
+        rl.tokens <- struct{}{}
+    }
+    
+    // Refill tokens
+    go func() {
+        for range rl.ticker.C() {
+            select {
+            case rl.tokens <- struct{}{}:
+            default: // Bucket full
+            }
+        }
+    }()
+    
+    return rl
+}
+
+func (rl *RateLimiter) Wait() {
+    <-rl.tokens
+}
+```
+
+### Deadline Management
+
+```go
+func ProcessBatch(clock clockz.Clock, items []Item, deadline time.Time) error {
+    for _, item := range items {
+        if clock.Now().After(deadline) {
+            return fmt.Errorf("deadline exceeded, processed %d/%d items", i, len(items))
+        }
+        
+        remaining := deadline.Sub(clock.Now())
+        ctx, cancel := clock.WithTimeout(context.Background(), remaining)
+        
+        err := processItem(ctx, item)
+        cancel()
+        
+        if err != nil {
+            return fmt.Errorf("failed to process item %d: %w", i, err)
+        }
+    }
+    
+    return nil
+}
+```
+
+## Complete API Reference
+
+### Clock Interface
+
+The main interface that both RealClock and FakeClock implement:
 
 ```go
 type Clock interface {
@@ -31,260 +382,367 @@ type Clock interface {
 }
 ```
 
-**Any type that implements this interface can be used as a clock.** This means you can:
-- Use the real clock implementation for production
-- Use fake clock implementations for deterministic testing
-- Mix and match both approaches seamlessly
+#### Clock.Now() time.Time
+Returns the current time according to the clock.
+- **RealClock**: Returns `time.Now()`
+- **FakeClock**: Returns the fake clock's current time
+
+#### Clock.After(d time.Duration) <-chan time.Time
+Returns a channel that sends the current time after duration d.
+- **RealClock**: Wraps `time.After(d)`
+- **FakeClock**: Fires when fake time advances past target
+- Channel has buffer of 1 to prevent blocking
+
+#### Clock.AfterFunc(d time.Duration, f func()) Timer
+Executes function f after duration d.
+- **RealClock**: Wraps `time.AfterFunc(d, f)`
+- **FakeClock**: Executes synchronously when time advances
+- Returns Timer that can be stopped or reset
+- Function runs in its own goroutine (RealClock) or synchronously (FakeClock)
+
+#### Clock.NewTimer(d time.Duration) Timer
+Creates a new Timer that fires after duration d.
+- **RealClock**: Wraps `time.NewTimer(d)`
+- **FakeClock**: Creates timer that respects fake time
+- Timer can be stopped or reset
+- Use `timer.C()` to access the channel
+
+#### Clock.NewTicker(d time.Duration) Ticker
+Creates a new Ticker that fires repeatedly every duration d.
+- **RealClock**: Wraps `time.NewTicker(d)`
+- **FakeClock**: Creates ticker that respects fake time
+- Must call `ticker.Stop()` to release resources
+- Panics if d <= 0
+
+#### Clock.Sleep(d time.Duration)
+Blocks the calling goroutine for duration d.
+- **RealClock**: Wraps `time.Sleep(d)`
+- **FakeClock**: Blocks until fake time advances by d
+- Implemented as `<-clock.After(d)`
+
+#### Clock.Since(t time.Time) time.Duration
+Returns time elapsed since t.
+- **RealClock**: Equivalent to `time.Since(t)`
+- **FakeClock**: Returns `fakeClock.Now().Sub(t)`
+- Convenience method for `clock.Now().Sub(t)`
+
+#### Clock.WithTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc)
+Creates a context that cancels after timeout duration.
+- **RealClock**: Wraps `context.WithTimeout(ctx, timeout)`
+- **FakeClock**: Cancels when fake time advances past deadline
+- Returns context and cancel function
+- Cancel function must be called to release resources
+
+#### Clock.WithDeadline(ctx context.Context, deadline time.Time) (context.Context, context.CancelFunc)
+Creates a context that cancels at deadline time.
+- **RealClock**: Wraps `context.WithDeadline(ctx, deadline)`
+- **FakeClock**: Cancels when fake time reaches deadline
+- Returns immediately cancelled context if deadline already passed
+- Cancel function must be called to release resources
+
+### Timer Interface
 
 ```go
-// Production code - uses real time
-func processWithDeadline(clock clockz.Clock, deadline time.Time) error {
-    if clock.Now().After(deadline) {
-        return errors.New("deadline already passed")
-    }
-    
-    duration := deadline.Sub(clock.Now())
-    timer := clock.NewTimer(duration)
-    defer timer.Stop()
-    
-    select {
-    case <-timer.C():
-        return errors.New("operation timed out")
-    case <-doWork():
-        return nil
-    }
-}
-
-// Test code - uses fake time for deterministic testing
-func TestProcessWithDeadline(t *testing.T) {
-    clock := clockz.NewFakeClockAt(time.Now())
-    deadline := clock.Now().Add(5 * time.Minute)
-    
-    // Simulate timeout
-    clock.Advance(6 * time.Minute)
-    
-    err := processWithDeadline(clock, deadline)
-    assert.Error(t, err)
-    assert.Contains(t, err.Error(), "deadline already passed")
+type Timer interface {
+    Stop() bool
+    Reset(d time.Duration) bool
+    C() <-chan time.Time
 }
 ```
 
-## Quick Start
+#### Timer.Stop() bool
+Stops the timer.
+- Returns true if timer was stopped before firing
+- Returns false if timer already fired or was stopped
+- After Stop(), timer will not fire
+- Safe to call multiple times
 
-While you can implement `Clock` directly, clockz provides convenient implementations:
+#### Timer.Reset(d time.Duration) bool
+Resets the timer to fire after duration d.
+- Returns true if timer was active before reset
+- Returns false if timer had expired or was stopped
+- Timer must be stopped or expired before Reset
+- Resets from current clock time, not original start time
+
+#### Timer.C() <-chan time.Time
+Returns the channel on which the timer sends its time.
+- Channel has buffer of 1
+- Receives exactly once when timer fires
+- Channel is not closed after firing
+
+### Ticker Interface
 
 ```go
-// Real clock for production
-realClock := clockz.RealClock
-now := realClock.Now()
-
-// Fake clock for testing
-fakeClock := clockz.NewFakeClockAt(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
-testTime := fakeClock.Now() // Always returns 2024-01-01 12:00:00 UTC
-
-// Advance time in tests
-fakeClock.Advance(1 * time.Hour)
-laterTime := fakeClock.Now() // Returns 2024-01-01 13:00:00 UTC
+type Ticker interface {
+    Stop()
+    C() <-chan time.Time
+}
 ```
 
-## Why clockz?
+#### Ticker.Stop()
+Stops the ticker.
+- No more ticks will be sent after Stop
+- Does not close the channel
+- Required to release ticker resources
 
-- **Type-safe**: Full compile-time type checking with Go generics
-- **Deterministic testing**: Fake clocks eliminate time-based test flakiness
-- **Zero dependencies**: Just standard library
-- **Thread-safe**: All operations are safe for concurrent use
-- **Context integration**: Built-in support for timeouts and cancellation
-- **Production ready**: Battle-tested patterns for reliable time handling
-- **Simple**: Minimal API surface, easy to understand and use
+#### Ticker.C() <-chan time.Time
+Returns the channel on which ticks are delivered.
+- Channel has buffer of 1
+- Sends time at regular intervals
+- May drop ticks if receiver is slow
 
-## Installation
+### RealClock Implementation
+
+Global instance that delegates to the standard `time` package:
+
+```go
+var RealClock Clock = &realClock{}
+```
+
+Usage:
+```go
+// Use the global instance directly
+now := clockz.RealClock.Now()
+timer := clockz.RealClock.NewTimer(5 * time.Second)
+```
+
+Characteristics:
+- Thread-safe
+- Zero overhead (direct delegation)
+- Production ready
+- No additional methods beyond Clock interface
+
+### FakeClock Implementation
+
+Provides complete control over time for testing:
+
+```go
+// Constructors
+func NewFakeClock() *FakeClock
+func NewFakeClockAt(t time.Time) *FakeClock
+
+// Additional methods beyond Clock interface
+func (f *FakeClock) Advance(d time.Duration)
+func (f *FakeClock) SetTime(t time.Time)
+func (f *FakeClock) HasWaiters() bool
+func (f *FakeClock) BlockUntilReady()
+```
+
+#### NewFakeClock() *FakeClock
+Creates a fake clock initialized to `time.Now()`.
+- Captures current real time as starting point
+- Time does not advance automatically
+
+#### NewFakeClockAt(t time.Time) *FakeClock
+Creates a fake clock initialized to specific time t.
+- Useful for deterministic test scenarios
+- Common pattern: `NewFakeClockAt(time.Unix(0, 0))`
+
+#### FakeClock.Advance(d time.Duration)
+Advances the fake clock's time by duration d.
+- Triggers all timers scheduled before new time
+- Executes AfterFunc callbacks synchronously
+- Updates all tickers
+- Triggers context timeouts/deadlines
+- Thread-safe
+
+#### FakeClock.SetTime(t time.Time)
+Sets the fake clock to specific time t.
+- Can move time forward or backward
+- Forward movement triggers timers/contexts
+- Backward movement does not untrigger fired timers
+- Thread-safe
+
+#### FakeClock.HasWaiters() bool
+Returns true if there are active timers, tickers, or contexts.
+- Useful for test assertions
+- Includes: timers, tickers, AfterFunc callbacks, contexts
+- Thread-safe
+
+#### FakeClock.BlockUntilReady()
+Blocks until all pending timer operations are delivered.
+- Ensures timer channel sends are processed
+- Waits for context timeout processing (1ms sleep)
+- Non-blocking sends: skips if receiver not ready
+- Useful for test synchronization
+- Thread-safe
+
+### Context Implementation Details
+
+The fake clock implements custom context handling for deterministic timeout testing:
+
+**Parent Context Monitoring:**
+- Starts goroutine to watch parent cancellation
+- Propagates parent cancellation to child
+- Cleans up on cancellation
+
+**Timeout Behavior:**
+- Contexts cancel precisely when fake time reaches deadline
+- No real time delays in tests
+- Proper error codes (DeadlineExceeded vs Canceled)
+
+**Resource Management:**
+- Cancel functions clean up waiters
+- Goroutines terminated on context cancellation
+- No resource leaks
+
+### Thread Safety
+
+All clockz operations are thread-safe:
+
+**RealClock:**
+- Delegates to thread-safe `time` package functions
+- No additional synchronization needed
+
+**FakeClock:**
+- Uses `sync.RWMutex` for time access
+- Separate `contextMu` for context operations
+- Safe for concurrent timer/ticker creation
+- Safe for concurrent time advancement
+
+### Performance Characteristics
+
+**RealClock:**
+- Zero overhead: direct delegation to `time` package
+- No allocations beyond `time` package needs
+- Suitable for production use
+
+**FakeClock:**
+- O(n) time advancement where n = number of waiters
+- Timers sorted by target time
+- Synchronous AfterFunc execution
+- Minimal allocations for timer tracking
+
+## Testing clockz Itself
+
+The library includes comprehensive tests demonstrating usage patterns:
 
 ```bash
-go get github.com/zoobzio/clockz
-```
+# Run all tests
+make test
 
-Requirements: Go 1.21+ (for generics)
+# Run with race detection
+make test-race
 
-## Quick Example
+# Run with coverage
+make test-coverage
 
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "time"
-    "github.com/zoobzio/clockz"
-)
-
-type Service struct {
-    clock clockz.Clock
-}
-
-func (s *Service) ProcessWithTimeout(ctx context.Context, timeout time.Duration) error {
-    // Create a timeout context using our clock
-    timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-    defer cancel()
-    
-    // Start processing
-    start := s.clock.Now()
-    
-    select {
-    case <-timeoutCtx.Done():
-        return fmt.Errorf("operation timed out after %v", s.clock.Since(start))
-    case <-s.doWork():
-        fmt.Printf("Completed in %v\n", s.clock.Since(start))
-        return nil
-    }
-}
-
-func (s *Service) doWork() <-chan struct{} {
-    done := make(chan struct{})
-    // Simulate work with a timer from our clock
-    s.clock.AfterFunc(100*time.Millisecond, func() {
-        close(done)
-    })
-    return done
-}
-
-func main() {
-    // Production: use real clock
-    service := &Service{clock: clockz.RealClock}
-    
-    ctx := context.Background()
-    err := service.ProcessWithTimeout(ctx, 200*time.Millisecond)
-    if err != nil {
-        fmt.Printf("Error: %v\n", err)
-    }
-}
-```
-
-## Core Concepts
-
-**The Clock Interface**: Everything in clockz implements `Clock`. You can:
-- Use the real clock for production code
-- Use fake clocks for deterministic testing
-- Create custom clock implementations for specific needs
-
-**Real Clock**:
-- Wraps the standard `time` package
-- Provides the same functionality with a testable interface
-- Safe for concurrent use
-
-**Fake Clock**:
-- Deterministic time for testing
-- Manually advance time with `Advance()` method
-- All timers and tickers respect the fake time
-- Thread-safe operations
-
-**Context Integration**:
-- `WithTimeout()` creates timeout contexts using clock time
-- `WithDeadline()` creates deadline contexts using clock time  
-- Works seamlessly with standard context patterns
-- Enables deterministic timeout testing with fake clocks
-
-**Additional Methods**:
-- `Sleep()` blocks for a duration using the clock's time source
-- `After()` returns a channel that receives after a duration
-- `Since()` calculates time elapsed since a given time
-- All methods respect the clock implementation (real vs fake)
-
-## Method Examples
-
-**Context Methods**:
-```go
-// WithTimeout creates a context that cancels after duration
-ctx, cancel := clock.WithTimeout(context.Background(), 30*time.Second)
-defer cancel()
-
-// WithDeadline creates a context that cancels at specific time
-deadline := clock.Now().Add(1 * time.Minute)
-ctx, cancel = clock.WithDeadline(context.Background(), deadline)
-defer cancel()
-```
-
-**Blocking and Timing**:
-```go
-// Sleep blocks for duration (respects fake time)
-clock.Sleep(100 * time.Millisecond)
-
-// After returns channel that receives after duration  
-select {
-case <-clock.After(time.Second):
-    fmt.Println("Timer fired")
-case <-ctx.Done():
-    fmt.Println("Context cancelled")
-}
-
-// Since calculates elapsed time
-start := clock.Now()
-// ... do work ...
-elapsed := clock.Since(start)
-```
-
-## Testing Example
-
-Here's how clockz makes time-dependent code testable:
-
-```go
-// Production code that depends on time
-func RetryWithBackoff(clock clockz.Clock, fn func() error) error {
-    backoff := time.Second
-    for i := 0; i < 3; i++ {
-        if err := fn(); err == nil {
-            return nil
-        }
-        
-        timer := clock.NewTimer(backoff)
-        <-timer.C()
-        backoff *= 2
-    }
-    return errors.New("max retries exceeded")
-}
-
-// Test that runs instantly but tests real behavior
-func TestRetryWithBackoff(t *testing.T) {
-    clock := clockz.NewFakeClockAt(time.Now())
-    attempts := 0
-    
-    // Function that fails twice, then succeeds
-    fn := func() error {
-        attempts++
-        if attempts < 3 {
-            return errors.New("temporary failure")
-        }
-        return nil
-    }
-    
-    // Run retry in goroutine
-    done := make(chan error, 1)
-    go func() {
-        done <- RetryWithBackoff(clock, fn)
-    }()
-    
-    // Advance time to trigger retries
-    clock.Advance(time.Second)    // First retry
-    clock.Advance(2 * time.Second) // Second retry
-    
-    // Verify success
-    err := <-done
-    assert.NoError(t, err)
-    assert.Equal(t, 3, attempts)
-}
-```
-
-## Performance
-
-clockz is designed for minimal overhead:
-
-- Real clock operations delegate directly to `time` package
-- Fake clock operations are simple atomic operations
-- No reflection or runtime type assertions
-- Optimized for common paths
-
-Run benchmarks:
-```bash
+# Run benchmarks
 make bench
+```
+
+Key test files to examine:
+- `fake_test.go`: Fake clock behavior tests
+- `integration_test.go`: Real-world usage patterns
+- `example_test.go`: Runnable documentation examples
+
+## Common Pitfalls and Solutions
+
+### Pitfall: Timer Channel Blocking
+
+**Problem:** Timer channels have buffer of 1 and may block if not consumed.
+
+**Solution:** Always consume timer channel or use Stop():
+```go
+timer := clock.NewTimer(5 * time.Second)
+defer timer.Stop() // Prevents resource leak
+
+select {
+case <-timer.C():
+    // Handle timeout
+case <-done:
+    // Handle completion
+}
+```
+
+### Pitfall: Ticker Resource Leak
+
+**Problem:** Tickers must be stopped to release resources.
+
+**Solution:** Always defer Stop():
+```go
+ticker := clock.NewTicker(time.Second)
+defer ticker.Stop() // Critical for cleanup
+```
+
+### Pitfall: Context Cancel Function Leak
+
+**Problem:** Not calling cancel function leaks resources.
+
+**Solution:** Always defer cancel():
+```go
+ctx, cancel := clock.WithTimeout(ctx, 30*time.Second)
+defer cancel() // Always call, even on success path
+```
+
+### Pitfall: Fake Clock Synchronization
+
+**Problem:** Test operations may not be ready when time advances.
+
+**Solution:** Use BlockUntilReady() or proper goroutine synchronization:
+```go
+go func() {
+    <-clock.After(5 * time.Second)
+    done <- true
+}()
+
+clock.BlockUntilReady() // Ensure timer is set up
+clock.Advance(5 * time.Second)
+```
+
+### Pitfall: AfterFunc Execution Differences
+
+**Problem:** FakeClock executes AfterFunc synchronously, RealClock asynchronously.
+
+**Solution:** Don't rely on execution context:
+```go
+// Works with both implementations
+var mu sync.Mutex
+clock.AfterFunc(time.Second, func() {
+    mu.Lock()
+    defer mu.Unlock()
+    // Thread-safe operation
+})
+```
+
+## Migration Guide
+
+### From time.After to clock.After
+
+```go
+// Before
+select {
+case <-time.After(5 * time.Second):
+    handleTimeout()
+}
+
+// After
+select {
+case <-clock.After(5 * time.Second):
+    handleTimeout()
+}
+```
+
+### From time.NewTimer to clock.NewTimer
+
+```go
+// Before
+timer := time.NewTimer(duration)
+<-timer.C
+
+// After  
+timer := clock.NewTimer(duration)
+<-timer.C() // Note: C is a method, not field
+```
+
+### From context.WithTimeout to clock.WithTimeout
+
+```go
+// Before
+ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+
+// After
+ctx, cancel := clock.WithTimeout(ctx, 30*time.Second)
 ```
 
 ## Contributing
@@ -292,14 +750,18 @@ make bench
 Contributions welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ```bash
-# Run tests
-make test
+# Setup
+git clone https://github.com/zoobzio/clockz
+cd clockz
 
-# Run linter
-make lint
+# Development
+make test           # Run tests
+make test-race      # Test with race detection
+make lint           # Run linters
+make bench          # Run benchmarks
 
-# Run benchmarks
-make bench
+# Before committing
+make ci             # Run all checks
 ```
 
 ## License
