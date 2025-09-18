@@ -90,12 +90,8 @@ jobs:
     - name: Download dependencies
       run: go mod download
       
-    - name: Run core benchmarks
-      run: go test -v -bench=. -benchmem -benchtime=100ms -timeout=15m ./...
-      
-    - name: Store benchmark results
-      run: |
-        go test -bench=. -benchmem -benchtime=100ms -timeout=15m ./... | tee benchmark-results.txt
+    - name: Run benchmarks and store results
+      run: go test -v -bench=. -benchmem -benchtime=100ms -timeout=15m ./... | tee benchmark-results.txt
         
     - name: Upload benchmark results
       uses: actions/upload-artifact@v4
