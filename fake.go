@@ -137,7 +137,12 @@ func (f *FakeClock) NewTimer(d time.Duration) Timer {
 }
 
 // NewTicker returns a new Ticker.
+// Panics if d <= 0, matching time.NewTicker behavior.
 func (f *FakeClock) NewTicker(d time.Duration) Ticker {
+	if d <= 0 {
+		panic("non-positive interval for NewTicker")
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -379,7 +384,7 @@ func (f *FakeClock) setTimeLocked(t time.Time) {
 				w.afterFunc()
 			}
 
-			// Handle tickers
+			// Handle tickers - they reschedule and stay active
 			if w.period > 0 {
 				w.targetTime = w.targetTime.Add(w.period)
 				for !w.targetTime.After(t) {
@@ -387,6 +392,9 @@ func (f *FakeClock) setTimeLocked(t time.Time) {
 					w.targetTime = w.targetTime.Add(w.period)
 				}
 				newWaiters = append(newWaiters, w)
+			} else {
+				// One-shot timer has fired, mark inactive
+				w.active = false
 			}
 		} else {
 			// Not ready yet

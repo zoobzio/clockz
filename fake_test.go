@@ -882,3 +882,191 @@ func TestFakeClock_WithTimeout_ParentCancellationRace(t *testing.T) {
 		childCancel()
 	}
 }
+
+func TestFakeClock_NewTimer_Stop(t *testing.T) {
+	clock := NewFakeClockAt(time.Unix(1000, 0))
+
+	// Test stopping an active timer
+	timer := clock.NewTimer(5 * time.Second)
+
+	// Timer should be active, Stop returns true
+	wasActive := timer.Stop()
+	if !wasActive {
+		t.Error("Stop should return true for active timer")
+	}
+
+	// Advance past the original deadline
+	clock.Advance(10 * time.Second)
+
+	// Timer should not fire since it was stopped
+	select {
+	case <-timer.C():
+		t.Error("stopped timer should not fire")
+	default:
+		// Expected
+	}
+
+	// Stopping again should return false (already stopped)
+	wasActive = timer.Stop()
+	if wasActive {
+		t.Error("Stop should return false for already stopped timer")
+	}
+}
+
+func TestFakeClock_NewTimer_Stop_AfterFire(t *testing.T) {
+	clock := NewFakeClockAt(time.Unix(1000, 0))
+
+	timer := clock.NewTimer(5 * time.Second)
+
+	// Advance to fire the timer
+	clock.Advance(5 * time.Second)
+	clock.BlockUntilReady()
+
+	// Drain the channel
+	<-timer.C()
+
+	// Stop after firing should return false
+	wasActive := timer.Stop()
+	if wasActive {
+		t.Error("Stop should return false for fired timer")
+	}
+}
+
+func TestFakeClock_NewTimer_Reset(t *testing.T) {
+	clock := NewFakeClockAt(time.Unix(1000, 0))
+
+	timer := clock.NewTimer(5 * time.Second)
+
+	// Reset active timer - should return true
+	wasActive := timer.Reset(10 * time.Second)
+	if !wasActive {
+		t.Error("Reset should return true for active timer")
+	}
+
+	// Advance past original deadline but not reset deadline
+	clock.Advance(7 * time.Second)
+
+	// Timer should not have fired yet
+	select {
+	case <-timer.C():
+		t.Error("timer should not fire before reset deadline")
+	default:
+		// Expected
+	}
+
+	// Advance past reset deadline
+	clock.Advance(5 * time.Second)
+	clock.BlockUntilReady()
+
+	// Timer should fire now
+	select {
+	case <-timer.C():
+		// Expected
+	default:
+		t.Error("timer should fire after reset deadline")
+	}
+}
+
+func TestFakeClock_NewTimer_Reset_Stopped(t *testing.T) {
+	clock := NewFakeClockAt(time.Unix(1000, 0))
+
+	timer := clock.NewTimer(5 * time.Second)
+	timer.Stop()
+
+	// Reset stopped timer - should return false but reactivate
+	wasActive := timer.Reset(3 * time.Second)
+	if wasActive {
+		t.Error("Reset should return false for stopped timer")
+	}
+
+	// Advance past new deadline
+	clock.Advance(3 * time.Second)
+	clock.BlockUntilReady()
+
+	// Timer should fire
+	select {
+	case <-timer.C():
+		// Expected - Reset reactivates the timer
+	default:
+		t.Error("reset timer should fire")
+	}
+}
+
+func TestFakeClock_NewTicker_PanicOnZero(t *testing.T) {
+	clock := NewFakeClockAt(time.Unix(1000, 0))
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("NewTicker(0) should panic")
+		}
+	}()
+
+	clock.NewTicker(0)
+}
+
+func TestFakeClock_NewTicker_PanicOnNegative(t *testing.T) {
+	clock := NewFakeClockAt(time.Unix(1000, 0))
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("NewTicker(-1) should panic")
+		}
+	}()
+
+	clock.NewTicker(-1 * time.Second)
+}
+
+func TestFakeClock_HasWaiters_NoWaiters(t *testing.T) {
+	clock := NewFakeClockAt(time.Unix(1000, 0))
+
+	if clock.HasWaiters() {
+		t.Error("fresh clock should have no waiters")
+	}
+}
+
+func TestFakeClock_HasWaiters_WithTimer(t *testing.T) {
+	clock := NewFakeClockAt(time.Unix(1000, 0))
+
+	timer := clock.NewTimer(5 * time.Second)
+
+	if !clock.HasWaiters() {
+		t.Error("clock with active timer should have waiters")
+	}
+
+	timer.Stop()
+
+	if clock.HasWaiters() {
+		t.Error("clock with stopped timer should have no waiters")
+	}
+}
+
+func TestFakeClock_HasWaiters_WithContext(t *testing.T) {
+	clock := NewFakeClockAt(time.Unix(1000, 0))
+
+	_, cancel := clock.WithTimeout(context.Background(), 5*time.Second)
+
+	if !clock.HasWaiters() {
+		t.Error("clock with active context should have waiters")
+	}
+
+	cancel()
+
+	// Small delay for cleanup
+	time.Sleep(time.Millisecond)
+
+	if clock.HasWaiters() {
+		t.Error("clock with cancelled context should have no waiters")
+	}
+}
+
+func TestFakeClock_Context_Err_BeforeDone(t *testing.T) {
+	clock := NewFakeClockAt(time.Unix(1000, 0))
+
+	ctx, cancel := clock.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Err should be nil before context is done
+	if ctx.Err() != nil {
+		t.Errorf("Err should be nil before done, got %v", ctx.Err())
+	}
+}
