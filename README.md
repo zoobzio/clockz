@@ -40,7 +40,7 @@ clock.Advance(5 * time.Minute) // Jump forward in time
 go get github.com/zoobzio/clockz
 ```
 
-Requirements: Go 1.21+
+Requirements: Go 1.24+
 
 ## Core Concepts
 

@@ -1,9 +1,10 @@
+version: "2"
+
 run:
   timeout: 5m
-  tests: true
   build-tags:
     - integration
-  
+
 linters:
   enable:
     # Security-critical linters
@@ -12,19 +13,18 @@ linters:
     - noctx        # HTTP requests must have context
     - bodyclose    # HTTP response body must be closed
     - sqlclosecheck # SQL rows/statements must be closed
-    
+
     # Code quality with security implications
     - govet        # Suspicious constructs
     - ineffassign  # Detect ineffectual assignments
     - staticcheck  # Advanced static analysis
     - unused       # Unused code detection
-    - typecheck    # Type checking
-    
+
     # Error handling
     - errcheck     # Unchecked errors
     - errchkjson   # JSON marshaling errors
     - wastedassign # Wasted assignments
-    
+
     # Best practices
     - gocritic     # Opinionated linter
     - revive       # Fast, configurable linter
@@ -33,13 +33,41 @@ linters:
     - goconst      # Repeated strings as constants
     - godot        # Comment sentences
     - godox        # TODO/FIXME comments
-    - gofmt        # Formatting
-    - goimports    # Import organization
     - misspell     # Spelling mistakes
     - nakedret     # Naked returns
     - prealloc     # Slice capacity hints
     - predeclared  # Shadowing predeclared identifiers
-    - copyloopvar  # Loop variable capture (replacement for deprecated exportloopref)
+    - copyloopvar  # Loop variable capture
+
+  exclusions:
+    # Predefined exclusion presets
+    presets:
+      - std-error-handling
+    rules:
+      # Allow TODO comments in development
+      - linters:
+          - godox
+        text: "TODO|FIXME|BUG"
+
+      # Test files can have different standards
+      - path: "_test\\.go$"
+        linters:
+          - funlen
+          - goconst
+          - dupl
+          - govet
+          - errcheck
+
+      # staticcheck QF suggestions are noisy in tests
+      - path: "_test\\.go$"
+        linters:
+          - staticcheck
+        text: "QF"
+
+formatters:
+  enable:
+    - gofmt        # Formatting
+    - goimports    # Import organization
 
 linters-settings:
   gosec:
@@ -50,19 +78,18 @@ linters-settings:
     config:
       global:
         audit: true
-  
+
   govet:
     enable-all: true
-  
+
   errcheck:
     check-type-assertions: true
     check-blank: true
     exclude-functions:
       - (io.Closer).Close  # Handled by bodyclose
-  
+
   gocritic:
     enabled-checks:
-      # Only non-default checks
       - commentedOutCode
       - deferInLoop
       - emptyFallthrough
@@ -107,7 +134,7 @@ linters-settings:
       - unnecessaryDefer
       - weakCond
       - yodaStyleExpr
-  
+
   revive:
     severity: warning
     rules:
@@ -141,39 +168,16 @@ linters-settings:
       - name: useless-break
       - name: var-declaration
       - name: var-naming
-  
+
   dupl:
     threshold: 150
-  
+
   goconst:
     min-len: 3
     min-occurrences: 3
-    
+
   misspell:
     locale: US
 
-issues:
-  exclude-dirs-use-default: false
-  exclude-rules:
-    # Allow TODO comments in development
-    - linters:
-        - godox
-      text: "TODO|FIXME|BUG"
-    
-    # Test files can have longer functions and different struct ordering
-    - path: _test\.go
-      linters:
-        - funlen
-        - goconst
-        - dupl
-        - govet
-        - errcheck
-  
-  # Maximum issues count per one linter
-  max-issues-per-linter: 0
-  
-  # Maximum count of issues with same text
-  max-same-issues: 0
-  
-  # Show all issues
-  new: false
+output:
+  show-stats: true
