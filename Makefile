@@ -63,7 +63,7 @@ ci: clean lint test test-integration bench coverage ## Full CI simulation
 # Setup targets
 install-tools: ## Install required development tools
 	@echo "Installing development tools..."
-	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.1.6
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.7.2
 
 install-hooks: ## Install git hooks
 	@echo "Installing git hooks..."
