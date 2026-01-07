@@ -6,7 +6,7 @@
 [![CodeQL](https://github.com/zoobzio/clockz/workflows/CodeQL/badge.svg)](https://github.com/zoobzio/clockz/security/code-scanning)
 [![Go Reference](https://pkg.go.dev/badge/github.com/zoobzio/clockz.svg)](https://pkg.go.dev/github.com/zoobzio/clockz)
 [![License](https://img.shields.io/github/license/zoobzio/clockz)](LICENSE)
-[![Go Version](https://img.shields.io/github/go-mod-go-version/zoobzio/clockz)](go.mod)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/zoobzio/clockz)](go.mod)
 [![Release](https://img.shields.io/github/v/release/zoobzio/clockz)](https://github.com/zoobzio/clockz/releases)
 
 Type-safe clock abstractions for Go with zero dependencies.
