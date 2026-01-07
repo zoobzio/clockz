@@ -166,7 +166,7 @@ func TestFakeClock_ConcurrentAccess(t *testing.T) {
 	// Multiple goroutines creating and using timers
 	const workers = 50
 	var wg sync.WaitGroup
-	errors := make(chan error, workers)
+	errs := make(chan error, workers)
 
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
@@ -184,16 +184,16 @@ func TestFakeClock_ConcurrentAccess(t *testing.T) {
 			case <-timer.C():
 				// Success
 			case <-time.After(time.Second):
-				errors <- fmt.Errorf("worker %d: timer timeout", id)
+				errs <- fmt.Errorf("worker %d: timer timeout", id)
 			}
 		}(i)
 	}
 
 	wg.Wait()
-	close(errors)
+	close(errs)
 
 	// Check for any worker errors
-	for err := range errors {
+	for err := range errs {
 		t.Error(err)
 	}
 }
@@ -1055,7 +1055,7 @@ func TestFakeClock_HasWaiters_WithContext(t *testing.T) {
 	time.Sleep(time.Millisecond)
 
 	if clock.HasWaiters() {
-		t.Error("clock with cancelled context should have no waiters")
+		t.Error("clock with canceled context should have no waiters")
 	}
 }
 
